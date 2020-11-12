@@ -86,8 +86,10 @@ class RSAOracleAttacker:
         self.n = self.public_key.public_numbers().n
         self.c0 = c
         
-        self.B = 0
-        s.M = []
+        #step 1
+        self.B = 2**((self.public_key.key_size - 16))
+        #single list, between 2B and 3B-1
+        self.M = [[Interval(2 * self.B, (3 * self.B) - 1)]]
         
     def _find_s(self, start_s, s_max=None):
         self.stats[-1].search_count += 1
@@ -135,15 +137,14 @@ class RSAOracleAttacker:
         # at n/3B. Because these are big numbers, you should use
         # gmpy2.c_div to divide n and 3B.
         # return the si found.
-        si = None
-        return si
+        si = gmpy2.c_div(self.n, 3 * self.B)
+        return self._find_s(si)
 
 
     def _step2b_searching_with_more_than_one_interval(self):
         # this function searches for a found s where s starts
         # at the most recent s plus one
-        si = None
-        return si
+        return self._find_s(self.s[-1] + 1)
 
 
     def _step2c_searching_with_one_interval_left(self):
@@ -160,6 +161,16 @@ class RSAOracleAttacker:
         # 
         # If no si is found, increase ri by one and try again.
         si = None
+        intervalSet = self.M[-1]
+        interval = intervalSet[0]
+        a,b = interval
+
+        ri = gmpy2.c_div(2 * ((b * self.s[-1]) - (2* self.B)), self.n) -1
+        while(si == None):
+            bBound = (2*self.B + (ri * self.n))//b
+            aBound = (3*self.B + (ri * self.n))//a
+            si = self._find_s(bBound, aBound)
+            ri +=1
         return si
 
     def _step3_narrowing_set_of_solutions(self, si):
@@ -187,6 +198,23 @@ class RSAOracleAttacker:
         # For explanations on why to use c_div vs f_div, look up these
         # functions in gmpy2 and then see if you can figure out why one is
         # used over the other
+        intervalSet = []
+        for interval in self.M[-1]:
+            a,b = interval
+            r_min = gmpy2.c_div((a * si) - ((3 * self.B) + 1), self.n)
+            r_max = gmpy2.f_div((b * si) - 2 * self.B, self.n)
+            
+            for r in range (r_min, r_max + 1):
+                new_a = gmpy2.c_div(2 * self.B + (r * self.n), si)
+                new_b = gmpy2.f_div((3 * self.B - 1) + (r * self.n), si)
+                new_interval = Interval (max(a, new_a), min(b, new_b))
+                intervalSet.append(new_interval)
+
+        self.M.append(intervalSet)
+        self.s.append(si)
+
+        if (len(intervalSet) == 1 and intervalSet[0][0] == intervalSet [0][1]):
+            return True
         return False
 
     def _step4_computing_the_solution(self):
